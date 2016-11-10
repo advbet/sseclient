@@ -1,12 +1,13 @@
 // Package sseclient is library for consuming SSE streams.
 //
 // Key features:
-// - **Synchronous execution**. Reconnecting, event parsing and processing is
-//   executed in single go-routine that started the stream. This gives freedom
-//   to use any concurrency and synchronization model.
-// - **Go context aware**. SSE streams can be optionally given a context on
-//   start. This gives flexibility to support different stream stopping
-//   mechanisms.
+//
+// Synchronous execution. Reconnecting, event parsing and processing is executed
+// in single go-routine that started the stream. This gives freedom to use any
+// concurrency and synchronization model.
+//
+// Go context aware. SSE streams can be optionally given a context on start.
+// This gives flexibility to support different stream stopping mechanisms.
 package sseclient
 
 import (
