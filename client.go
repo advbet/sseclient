@@ -47,10 +47,13 @@ type EventHandler func(e *Event)
 
 // Client is used to connect to SSE stream and receive events. It handles HTTP
 // request creation and reconnects automatically.
+//
+// Client struct should be created with New method or manually.
 type Client struct {
 	URL         string
 	LastEventID string
 	Retry       time.Duration
+	HTTPClient  *http.Client
 }
 
 // List of commonly used error handler function implementations.
@@ -62,13 +65,16 @@ var (
 // MalformedEvent error is returned if stream ended with incomplete event.
 var MalformedEvent = errors.New("incomplete event at the end of the stream")
 
-// New creates SSE stream client object. It does not connect to the SSE endpoing
-// until Start method is called.
+// New creates SSE stream client object. It will use given URL and last event ID
+// values, default HTTP client from http package and 2 second retry timeout.
+// This method only creates Client struct and does not start connecting to the
+// SSE endpoint.
 func New(url, lastEventID string) *Client {
 	return &Client{
 		URL:         url,
 		LastEventID: lastEventID,
 		Retry:       2 * time.Second,
+		HTTPClient:  http.DefaultClient,
 	}
 }
 
@@ -106,7 +112,7 @@ func (c *Client) connect(ctx context.Context, eventFn EventHandler) error {
 	if c.LastEventID != "" {
 		req.Header.Set("Last-Event-ID", c.LastEventID)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		// silently ignore connection errors and reconnect
 		return nil
