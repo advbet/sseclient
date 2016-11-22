@@ -1,7 +1,7 @@
 sseclient
 =========
 
-[![GoDoc](https://godoc.org/github.com/fln/sseclient?status.svg)](https://godoc.org/github.com/fln/sseclient)
+[![GoDoc](https://godoc.org/bitbucket.org/advbet/sseclient?status.svg)](https://godoc.org/bitbucket.org/advbet/sseclient)
 
 This is a go library for consuming streams [Server-Sent
 Events](https://www.w3.org/TR/eventsource/ "SSE"). It handles automatic
