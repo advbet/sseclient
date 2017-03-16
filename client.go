@@ -78,6 +78,33 @@ func New(url, lastEventID string) *Client {
 	}
 }
 
+// StreamMessage stores single SSE event or error.
+type StreamMessage struct {
+	Event *Event
+	Err   error
+}
+
+// Stream is non-blocking SSE stream consumption mode where events are passed
+// through a channel. Stream can be stopped by cancelling context.
+//
+// Parameter buf controls returned stream channel buffer size. Buffer size of 0
+// is a good default.
+func (c *Client) Stream(ctx context.Context, buf int) <-chan StreamMessage {
+	ch := make(chan StreamMessage, buf)
+	errorFn := func(err error) bool {
+		ch <- StreamMessage{Err: err}
+		return false
+	}
+	eventFn := func(e *Event) {
+		ch <- StreamMessage{Event: e}
+	}
+	go func() {
+		defer close(ch)
+		c.Start(ctx, eventFn, errorFn)
+	}()
+	return ch
+}
+
 // Start connects to the SSE stream. This function will block until SSE stream
 // is stopped. Stopping SSE stream is possible by cancelling given stream
 // context or by returning true from the error handler callback.

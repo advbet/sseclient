@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -238,4 +239,47 @@ func TestClientError409(t *testing.T) {
 	if !ok {
 		t.Fatalf("reponse code 409 should trigger a call to error handler")
 	}
+}
+
+func TestClientStream(t *testing.T) {
+	server := httptest.NewServer(sseHandler())
+	defer server.Close()
+
+	client := New(server.URL+"/single-event", "")
+	client.Retry = 0
+
+	ctx, stop := context.WithCancel(context.TODO())
+	var actual []StreamMessage
+	for msg := range client.Stream(ctx, 0) {
+		actual = append(actual, msg)
+		stop()
+	}
+
+	expected := []StreamMessage{{
+		Event: &Event{
+			Event: "message",
+			Data:  []byte("singe event stream"),
+		},
+	}}
+	assert.Equal(t, expected, actual)
+}
+
+func TestClientStreamError(t *testing.T) {
+	server := httptest.NewServer(sseHandler())
+	defer server.Close()
+
+	client := New(server.URL+"/409", "")
+	client.Retry = 0
+
+	ctx, stop := context.WithCancel(context.TODO())
+	var actual []StreamMessage
+	for msg := range client.Stream(ctx, 0) {
+		actual = append(actual, msg)
+		stop()
+	}
+
+	expected := []StreamMessage{{
+		Err: errors.New("bad response status code 409"),
+	}}
+	assert.Equal(t, expected, actual)
 }
