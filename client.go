@@ -110,7 +110,8 @@ func (c *Client) Stream(ctx context.Context, buf int) <-chan StreamMessage {
 // context or by returning true from the error handler callback.
 func (c *Client) Start(ctx context.Context, eventFn EventHandler, errorFn ErrorHandler) {
 	for {
-		if err := c.connect(ctx, eventFn); err != nil && err != io.EOF {
+		err := c.connect(ctx, eventFn)
+		if err != nil && err != io.EOF && err != context.Canceled {
 			stop := errorFn(err)
 			if stop {
 				// Error handler instructs to stop SSE stream
@@ -153,8 +154,6 @@ func (c *Client) connect(ctx context.Context, eventFn EventHandler) error {
 		for {
 			event, err := c.parseEvent(r)
 			if err != nil {
-				// io.EOF error will reconnect sliently, others
-				// will be passed to error handler
 				return err
 			}
 			// ignore empty events
