@@ -92,11 +92,18 @@ type StreamMessage struct {
 func (c *Client) Stream(ctx context.Context, buf int) <-chan StreamMessage {
 	ch := make(chan StreamMessage, buf)
 	errorFn := func(err error) bool {
-		ch <- StreamMessage{Err: err}
-		return false
+		select {
+		case ch <- StreamMessage{Err: err}:
+			return false
+		case <-ctx.Done():
+			return true
+		}
 	}
 	eventFn := func(e *Event) {
-		ch <- StreamMessage{Event: e}
+		select {
+		case ch <- StreamMessage{Event: e}:
+		case <-ctx.Done():
+		}
 	}
 	go func() {
 		defer close(ch)
