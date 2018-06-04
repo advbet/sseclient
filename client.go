@@ -54,6 +54,7 @@ type Client struct {
 	LastEventID string
 	Retry       time.Duration
 	HTTPClient  *http.Client
+	Headers     http.Header
 }
 
 // List of commonly used error handler function implementations.
@@ -75,6 +76,7 @@ func New(url, lastEventID string) *Client {
 		LastEventID: lastEventID,
 		Retry:       2 * time.Second,
 		HTTPClient:  http.DefaultClient,
+		Headers:     make(http.Header),
 	}
 }
 
@@ -146,6 +148,11 @@ func (c *Client) connect(ctx context.Context, eventFn EventHandler) error {
 	req.Header.Set("Accept", "text/event-stream")
 	if c.LastEventID != "" {
 		req.Header.Set("Last-Event-ID", c.LastEventID)
+	}
+	for h, vs := range c.Headers {
+		for _, v := range vs {
+			req.Header.Add(h, v)
+		}
 	}
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
