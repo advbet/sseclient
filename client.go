@@ -30,20 +30,28 @@ type Event struct {
 }
 
 // ErrorHandler is a callback that gets called every time SSE stream encounters
-// an error. Network connection errors and response codes 500, 502, 503,
-// 504 are not treated as errors.
+// an error including errors returned by EventHandler function. Network
+// connection errors and response codes 500, 502, 503, 504 are not treated as
+// errors.
 //
-// Error handler function should return true if SSE stream should be stopped or
-// false if SSE stream should reconnect.
+// If error handler returns nil, error will be treated as handled and stream
+// will continue to be processed (with automatic reconnect).
+//
+// If error handler returns error it is treated as fatal and stream processing
+// loop exits returning received error up the stack.
+//
+// This handler can be used to implement complex error handling scenarios. For
+// simple cases ReconnectOnError or StopOnError are provided by this library.
 //
 // Users of this package have to provide this function implementation.
-type ErrorHandler func(error) (stop bool)
+type ErrorHandler func(error) error
 
 // EventHandler is a callback that gets called every time event on the SSE
-// stream is received.
+// stream is received. Error returned from handler function will be passed to
+// the error handler.
 //
 // Users of this package have to provide this function implementation.
-type EventHandler func(e *Event)
+type EventHandler func(e *Event) error
 
 // Client is used to connect to SSE stream and receive events. It handles HTTP
 // request creation and reconnects automatically.
@@ -59,8 +67,8 @@ type Client struct {
 
 // List of commonly used error handler function implementations.
 var (
-	ReconnectOnError ErrorHandler = func(error) bool { return false }
-	StopOnError      ErrorHandler = func(error) bool { return true }
+	ReconnectOnError ErrorHandler = func(error) error { return nil }
+	StopOnError      ErrorHandler = func(err error) error { return err }
 )
 
 // MalformedEvent error is returned if stream ended with incomplete event.
@@ -93,19 +101,20 @@ type StreamMessage struct {
 // is a good default.
 func (c *Client) Stream(ctx context.Context, buf int) <-chan StreamMessage {
 	ch := make(chan StreamMessage, buf)
-	errorFn := func(err error) bool {
+	errorFn := func(err error) error {
 		select {
 		case ch <- StreamMessage{Err: err}:
-			return false
+			return nil
 		case <-ctx.Done():
-			return true
+			return ctx.Err()
 		}
 	}
-	eventFn := func(e *Event) {
+	eventFn := func(e *Event) error {
 		select {
 		case ch <- StreamMessage{Event: e}:
 		case <-ctx.Done():
 		}
+		return nil
 	}
 	go func() {
 		defer close(ch)
@@ -116,20 +125,20 @@ func (c *Client) Stream(ctx context.Context, buf int) <-chan StreamMessage {
 
 // Start connects to the SSE stream. This function will block until SSE stream
 // is stopped. Stopping SSE stream is possible by cancelling given stream
-// context or by returning true from the error handler callback.
-func (c *Client) Start(ctx context.Context, eventFn EventHandler, errorFn ErrorHandler) {
+// context or by returning some error from the error handler callback. Error
+// returned by the error handler is passed back to the caller of this function.
+func (c *Client) Start(ctx context.Context, eventFn EventHandler, errorFn ErrorHandler) error {
 	for {
 		err := c.connect(ctx, eventFn)
 		if err != nil && err != io.EOF && err != context.Canceled {
-			stop := errorFn(err)
-			if stop {
+			if clientErr := errorFn(err); clientErr != nil {
 				// Error handler instructs to stop SSE stream
-				break
+				return clientErr
 			}
 		}
 		if ctx != nil && ctx.Err() != nil {
 			// Someone cancelled the context, exit silently
-			break
+			return nil
 		}
 		time.Sleep(c.Retry)
 	}
@@ -174,7 +183,9 @@ func (c *Client) connect(ctx context.Context, eventFn EventHandler) error {
 			if len(event.Data) == 0 {
 				continue
 			}
-			eventFn(event)
+			if err := eventFn(event); err != nil {
+				return err
+			}
 		}
 	case http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
 		// reconnect without logginng an error

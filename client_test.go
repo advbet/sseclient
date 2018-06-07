@@ -200,11 +200,12 @@ func TestClientReconnect(t *testing.T) {
 
 	counter := 0
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
-	handler := func(e *Event) {
+	handler := func(e *Event) error {
 		counter++
 		if counter == 5 {
 			cancel()
 		}
+		return nil
 	}
 
 	client.Start(ctx, handler, ReconnectOnError)
@@ -221,23 +222,55 @@ func TestClientError409(t *testing.T) {
 	defer server.Close()
 
 	ok := false
-	eventHandler := func(e *Event) {}
-	errorHandler := func(err error) bool {
+	eventHandler := func(e *Event) error { return nil }
+	errorHandler := func(err error) error {
 		ok = true
-		return true
+		return errors.New("stop")
 	}
 
 	// /409 endpoint will return 409 status code which should trigger an
 	// error. If out error handler catches the error it will mark test as
 	// successfull and stop sse client
 	client := New(server.URL+"/409", "")
-	ctx, _ := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
 	client.Start(ctx, eventHandler, errorHandler)
 
 	// We must have at least 2 reconnect attempts to confirm that client
 	// reconnected automatically
 	if !ok {
 		t.Fatalf("reponse code 409 should trigger a call to error handler")
+	}
+}
+
+func TestClientEventHandlerErrorPropagation(t *testing.T) {
+	server := httptest.NewServer(sseHandler())
+	defer server.Close()
+
+	parserErr := errors.New("fail always")
+	streamErr := errors.New("stop the stream")
+
+	var receivedByHandler error
+	eventHandler := func(e *Event) error { return parserErr }
+	errorHandler := func(err error) error {
+		receivedByHandler = err
+		return streamErr
+	}
+
+	// /single-event endpoint will emit single event but our handler will
+	// fail to parse it. We check if error returned by parser is passed back
+	// to the error handler and if error returned by error handler is passed
+	// back on stream end.
+	client := New(server.URL+"/single-event", "")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	err := client.Start(ctx, eventHandler, errorHandler)
+
+	if err != streamErr {
+		t.Fatalf("stream client dropped error handler error")
+	}
+	if receivedByHandler != parserErr {
+		t.Fatalf("stream client did not pass parser error to error handler")
 	}
 }
 
@@ -249,6 +282,7 @@ func TestClientStream(t *testing.T) {
 	client.Retry = 0
 
 	ctx, stop := context.WithCancel(context.TODO())
+	defer stop()
 	var actual []StreamMessage
 	for msg := range client.Stream(ctx, 0) {
 		actual = append(actual, msg)
@@ -272,6 +306,7 @@ func TestClientStreamError(t *testing.T) {
 	client.Retry = 0
 
 	ctx, stop := context.WithCancel(context.TODO())
+	defer stop()
 	var actual []StreamMessage
 	for msg := range client.Stream(ctx, 0) {
 		actual = append(actual, msg)
