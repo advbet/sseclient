@@ -226,6 +226,7 @@ func (c *Client) parseEvent(r *bufio.Reader) (*Event, error) {
 		}
 
 		if len(line) == 0 {
+			c.LastEventID = event.ID
 			return event, nil
 		}
 		parts := bytes.SplitN(line, []byte(":"), 2)
@@ -248,7 +249,6 @@ func (c *Client) parseEvent(r *bufio.Reader) (*Event, error) {
 			c.Retry = time.Duration(ms) * time.Millisecond
 		case "id":
 			event.ID = string(parts[1])
-			c.LastEventID = string(parts[1])
 		case "event":
 			event.Event = string(parts[1])
 		case "data":

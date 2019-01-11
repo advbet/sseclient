@@ -318,3 +318,63 @@ func TestClientStreamError(t *testing.T) {
 	}}
 	assert.Equal(t, expected, actual)
 }
+
+func TestReconnectAfterPartialEvent(t *testing.T) {
+	ctx, stop := context.WithCancel(context.TODO())
+	defer stop()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+
+		var response string
+		id := r.Header.Get("Last-Event-ID")
+		switch id {
+		case "0": // first request
+			response = "id: 1\ndata: message1\n\nid: 2\ndata: partial second message"
+		case "1": // second request
+			response = "id: 2\ndata: message2\n\n"
+		case "2": // third request
+			response = "id: 3\ndata: message3\n\n"
+		default:
+			stop()
+		}
+		fmt.Fprint(w, response)
+	}))
+	defer server.Close()
+
+	client := New(server.URL, "0")
+	client.Retry = 0
+
+	var actual []StreamMessage
+	for msg := range client.Stream(ctx, 0) {
+		actual = append(actual, msg)
+	}
+
+	expected := []StreamMessage{
+		{
+			Event: &Event{
+				ID:    "1",
+				Event: "message",
+				Data:  []byte("message1"),
+			},
+		},
+		{
+			Err: MalformedEvent,
+		},
+		{
+			Event: &Event{
+				ID:    "2",
+				Event: "message",
+				Data:  []byte("message2"),
+			},
+		},
+		{
+			Event: &Event{
+				ID:    "3",
+				Event: "message",
+				Data:  []byte("message3"),
+			},
+		},
+	}
+	assert.Equal(t, expected, actual)
+}
