@@ -14,6 +14,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -74,8 +75,9 @@ var (
 // MalformedEvent error is returned if stream ended with incomplete event.
 var MalformedEvent = errors.New("incomplete event at the end of the stream")
 
-// New creates SSE stream client object. It will use given URL and last event ID
-// values, default HTTP client from http package and 2 second retry timeout.
+// New creates SSE stream client object. It will use given url and
+// last event ID values and a 2 second retry timeout.
+// It will use custom http client that skips verification for tls process.
 // This method only creates Client struct and does not start connecting to the
 // SSE endpoint.
 func New(url, lastEventID string) *Client {
@@ -83,8 +85,14 @@ func New(url, lastEventID string) *Client {
 		URL:         url,
 		LastEventID: lastEventID,
 		Retry:       2 * time.Second,
-		HTTPClient:  http.DefaultClient,
-		Headers:     make(http.Header),
+		HTTPClient: &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{
+					InsecureSkipVerify: true,
+				},
+			},
+		},
+		Headers: make(http.Header),
 	}
 }
 
