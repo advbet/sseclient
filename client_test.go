@@ -314,7 +314,7 @@ func TestClientStreamError(t *testing.T) {
 	}
 
 	expected := []StreamMessage{{
-		Err: errors.New("bad response status code 409"),
+		Err: errors.New("invalid status code: Conflict (409)"),
 	}}
 	assert.Equal(t, expected, actual)
 }

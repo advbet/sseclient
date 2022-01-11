@@ -195,12 +195,9 @@ func (c *Client) connect(ctx context.Context, eventFn EventHandler) error {
 				return err
 			}
 		}
-	case http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
-		// reconnect without logginng an error
-		return nil
 	default:
 		// trigger error + reconnect
-		return fmt.Errorf("bad response status code %d", resp.StatusCode)
+		return fmt.Errorf("invalid status code: %s (%d)", http.StatusText(resp.StatusCode), resp.StatusCode)
 	}
 }
 
