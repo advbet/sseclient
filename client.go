@@ -64,6 +64,10 @@ type Client struct {
 	Retry       time.Duration
 	HTTPClient  *http.Client
 	Headers     http.Header
+
+	// VerboseStatusCodes specifies whether connect should return all
+	// status codes as errors if they're not StatusOK (200).
+	VerboseStatusCodes bool
 }
 
 // List of commonly used error handler function implementations.
@@ -117,6 +121,7 @@ func (c *Client) Stream(ctx context.Context, buf int) <-chan StreamMessage {
 			return ctx.Err()
 		}
 	}
+
 	eventFn := func(e *Event) error {
 		select {
 		case ch <- StreamMessage{Event: e}:
@@ -124,10 +129,12 @@ func (c *Client) Stream(ctx context.Context, buf int) <-chan StreamMessage {
 		}
 		return nil
 	}
+
 	go func() {
 		defer close(ch)
 		c.Start(ctx, eventFn, errorFn)
 	}()
+
 	return ch
 }
 
@@ -144,10 +151,12 @@ func (c *Client) Start(ctx context.Context, eventFn EventHandler, errorFn ErrorH
 				return clientErr
 			}
 		}
+
 		if ctx != nil && ctx.Err() != nil {
 			// Someone cancelled the context, exit silently
 			return nil
 		}
+
 		time.Sleep(c.Retry)
 	}
 }
@@ -173,14 +182,14 @@ func (c *Client) connect(ctx context.Context, eventFn EventHandler) error {
 	}
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		// silently ignore connection errors and reconnect
+		// silently ignore connection errors and reconnect.
 		return nil
 	}
 	defer resp.Body.Close()
 
 	switch resp.StatusCode {
 	case http.StatusOK:
-		// we do not support BOM in sse streams, or \r line separators
+		// we do not support BOM in sse streams, or \r line separators.
 		r := bufio.NewReader(resp.Body)
 		for {
 			event, err := c.parseEvent(r)
@@ -196,10 +205,14 @@ func (c *Client) connect(ctx context.Context, eventFn EventHandler) error {
 			}
 		}
 	case http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
-		// reconnect without logginng an error
+		if c.VerboseStatusCodes {
+			return fmt.Errorf("bad response status code %d", resp.StatusCode)
+		}
+
+		// reconnect without logging an error.
 		return nil
 	default:
-		// trigger error + reconnect
+		// trigger a reconnect and output an error.
 		return fmt.Errorf("bad response status code %d", resp.StatusCode)
 	}
 }
