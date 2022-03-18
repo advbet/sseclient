@@ -25,9 +25,19 @@ import (
 
 // Event object is a representation of single chunk of data in event stream.
 type Event struct {
-	ID    string
+	// ID of the event.
+	ID string
+
+	// Event specifies type of the event.
 	Event string
-	Data  []byte
+
+	// Data contains data of the event.
+	Data []byte
+
+	// SentAt specifies at which time this message was sent from the
+	// server. This is useful to determine how long it took to reach the
+	// destination.
+	SentAt time.Time
 }
 
 // ErrorHandler is a callback that gets called every time SSE stream encounters
@@ -272,10 +282,18 @@ func (c *Client) parseEvent(r *bufio.Reader) (*Event, error) {
 			event.ID = string(parts[1])
 		case "event":
 			event.Event = string(parts[1])
+		case "sent_at":
+			tstamp, err := time.Parse(time.RFC3339Nano, string(parts[1]))
+			if err != nil {
+				return nil, err
+			}
+
+			event.SentAt = tstamp
 		case "data":
 			if event.Data != nil {
 				event.Data = append(event.Data, '\n')
 			}
+
 			event.Data = append(event.Data, parts[1]...)
 		default:
 			// Ignore unknown fields and comments

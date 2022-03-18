@@ -330,11 +330,11 @@ func TestReconnectAfterPartialEvent(t *testing.T) {
 		id := r.Header.Get("Last-Event-ID")
 		switch id {
 		case "0": // first request
-			response = "id: 1\ndata: message1\n\nid: 2\ndata: partial second message"
+			response = "id: 1\nsent_at: 2022-03-18T11:13:56.882957841+03:00\ndata: message1\n\nid: 2\ndata: partial second message"
 		case "1": // second request
 			response = "id: 2\ndata: message2\n\n"
 		case "2": // third request
-			response = "id: 3\ndata: message3\n\n"
+			response = "id: 3\nsent_at: 2022-03-17T11:14:56.892957841+03:00\ndata: message3\n\n"
 		default:
 			stop()
 		}
@@ -353,9 +353,10 @@ func TestReconnectAfterPartialEvent(t *testing.T) {
 	expected := []StreamMessage{
 		{
 			Event: &Event{
-				ID:    "1",
-				Event: "message",
-				Data:  []byte("message1"),
+				ID:     "1",
+				Event:  "message",
+				Data:   []byte("message1"),
+				SentAt: time.Date(2022, 03, 18, 11, 13, 56, 882957841, time.FixedZone("", 10800)),
 			},
 		},
 		{
@@ -370,9 +371,10 @@ func TestReconnectAfterPartialEvent(t *testing.T) {
 		},
 		{
 			Event: &Event{
-				ID:    "3",
-				Event: "message",
-				Data:  []byte("message3"),
+				ID:     "3",
+				Event:  "message",
+				Data:   []byte("message3"),
+				SentAt: time.Date(2022, 03, 17, 11, 14, 56, 892957841, time.FixedZone("", 10800)),
 			},
 		},
 	}
