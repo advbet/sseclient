@@ -76,8 +76,15 @@ var (
 	StopOnError      ErrorHandler = func(err error) error { return err }
 )
 
-// MalformedEvent error is returned if stream ended with incomplete event.
-var MalformedEvent = errors.New("incomplete event at the end of the stream")
+var (
+	// MalformedEvent error is returned if stream ended with incomplete event.
+	MalformedEvent = errors.New("incomplete event at the end of the stream")
+
+	// errStreamConn error is returned when client is unable to
+	// connect to the stream. This error is only used to reconnect to
+	// the stream without outputing connection errors to the client.
+	errStreamConn = errors.New("cannot connect to the stream")
+)
 
 // New creates SSE stream client object. It will use given url and
 // last event ID values and a 2 second retry timeout.
@@ -143,47 +150,77 @@ func (c *Client) Stream(ctx context.Context, buf int) <-chan StreamMessage {
 // context or by returning some error from the error handler callback. Error
 // returned by the error handler is passed back to the caller of this function.
 func (c *Client) Start(ctx context.Context, eventFn EventHandler, errorFn ErrorHandler) error {
+	lastTimeout := c.Retry / 32
+
+	tm := time.NewTimer(0)
+	stop := func() {
+		tm.Stop()
+
+		select {
+		case <-tm.C:
+		default:
+		}
+	}
+	defer stop()
+
 	for {
 		err := c.connect(ctx, eventFn)
-		if err != nil && err != io.EOF && err != context.Canceled {
-			if clientErr := errorFn(err); clientErr != nil {
-				// Error handler instructs to stop SSE stream
-				return clientErr
+		switch err {
+		case nil, io.EOF:
+			// ok, we can reconnect right away
+			lastTimeout = c.Retry / 32
+		case ctx.Err():
+			// context cancellation exits silently
+			return nil
+		default:
+			if !errors.Is(err, errStreamConn) {
+				if cerr := errorFn(err); cerr != nil {
+					// error handler instructs to stop
+					// the sse stream
+					return cerr
+				}
+			}
+
+			stop()
+			tm.Reset(lastTimeout)
+
+			select {
+			case <-tm.C:
+			case <-ctx.Done():
+				// context cancellation exits silently
+				return nil
+			}
+
+			if lastTimeout < c.Retry {
+				lastTimeout = lastTimeout * 2
 			}
 		}
-
-		if ctx != nil && ctx.Err() != nil {
-			// Someone cancelled the context, exit silently
-			return nil
-		}
-
-		time.Sleep(c.Retry)
 	}
 }
 
 // connect performs single connection to SSE endpoint.
 func (c *Client) connect(ctx context.Context, eventFn EventHandler) error {
-	req, err := http.NewRequest(http.MethodGet, c.URL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.URL, nil)
 	if err != nil {
 		return err
 	}
-	if ctx != nil {
-		req = req.WithContext(ctx)
-	}
+
 	req.Header.Set("Cache-Control", "no-cache")
 	req.Header.Set("Accept", "text/event-stream")
 	if c.LastEventID != "" {
 		req.Header.Set("Last-Event-ID", c.LastEventID)
 	}
+
 	for h, vs := range c.Headers {
 		for _, v := range vs {
 			req.Header.Add(h, v)
 		}
 	}
+
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		// silently ignore connection errors and reconnect.
-		return nil
+		return errStreamConn
 	}
 	defer resp.Body.Close()
 
@@ -196,10 +233,12 @@ func (c *Client) connect(ctx context.Context, eventFn EventHandler) error {
 			if err != nil {
 				return err
 			}
+
 			// ignore empty events
 			if len(event.Data) == 0 {
 				continue
 			}
+
 			if err := eventFn(event); err != nil {
 				return err
 			}
@@ -210,7 +249,7 @@ func (c *Client) connect(ctx context.Context, eventFn EventHandler) error {
 		}
 
 		// reconnect without logging an error.
-		return nil
+		return errStreamConn
 	default:
 		// trigger a reconnect and output an error.
 		return fmt.Errorf("bad response status code %d", resp.StatusCode)
