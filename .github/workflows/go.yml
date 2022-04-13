@@ -1,0 +1,27 @@
+name: Go
+
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Set up Go
+      uses: actions/setup-go@v2
+      with:
+        go-version: 1.17
+
+    - name: golangci-lint
+      uses: golangci/golangci-lint-action@v2
+      with:
+        version: v1.45
+        args: --disable-all --enable=govet --enable=unused --enable=structcheck --enable=deadcode
+
+    - name: Build
+      run: go build -v ./...
+
+    - name: Test
+      run: go test -race -failfast -timeout 60s -v ./...
