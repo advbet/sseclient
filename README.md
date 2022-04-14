@@ -25,7 +25,7 @@ import (
         "log"
         "time"
 
-        "github.com/fln/sseclient"
+        "github.com/advbet/sseclient"
 )
 
 func errorHandler(err error) bool {
