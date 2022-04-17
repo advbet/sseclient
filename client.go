@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"strconv"
 	"time"
 )
@@ -92,11 +93,18 @@ var (
 // This method only creates Client struct and does not start connecting to the
 // SSE endpoint.
 func New(url, lastEventID string) *Client {
+	// cookiejar.New always returns a nil error
+	jar, _ := cookiejar.New(nil)
+
 	return &Client{
 		URL:         url,
 		LastEventID: lastEventID,
 		Retry:       2 * time.Second,
 		HTTPClient: &http.Client{
+			// The jar stores and maintains cookies, which are
+			// useful to track clients state in a server/proxy
+			// for better sse stream management/connection
+			Jar: jar,
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{
 					InsecureSkipVerify: true,
