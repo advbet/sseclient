@@ -40,6 +40,7 @@ func TestParseEventInvalidRetry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
+
 	if client.Retry != 0 {
 		t.Fatalf("expected retry to be 0, got %v", client.Retry)
 	}
@@ -224,15 +225,16 @@ func TestClientReconnect(t *testing.T) {
 
 	counter := 0
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
-	handler := func(e *Event) error {
+	handler := func(*Event) error {
 		counter++
 		if counter == 5 {
 			cancel()
 		}
+
 		return nil
 	}
 
-	client.Start(ctx, handler, ReconnectOnError)
+	_ = client.Start(ctx, handler, ReconnectOnError)
 
 	// We must have at least 2 reconnect attempts to confirm that client
 	// reconnected automatically
@@ -242,24 +244,28 @@ func TestClientReconnect(t *testing.T) {
 }
 
 func TestClientError409(t *testing.T) {
+	t.Parallel()
+
 	server := httptest.NewServer(sseHandler())
 	defer server.Close()
 
 	ok := false
 	eventHandler := func(*Event) error { return nil }
-	errorHandler := func(err error) error {
+	errorHandler := func(error) error {
 		ok = true
+
 		return errors.New("stop")
 	}
 
 	// /409 endpoint will return 409 status code which should trigger an
 	// error. If out error handler catches the error it will mark test as
-	// successfull and stop sse client
+	// successful and stop sse client
 	client := New(server.URL+"/409", "")
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
 
-	client.Start(ctx, eventHandler, errorHandler)
+	_ = client.Start(ctx, eventHandler, errorHandler)
 
 	// We must have at least 2 reconnect attempts to confirm that client
 	// reconnected automatically
@@ -278,9 +284,11 @@ func TestClientEventHandlerErrorPropagation(t *testing.T) {
 	streamErr := errors.New("stop the stream")
 
 	var receivedByHandler error
-	eventHandler := func(e *Event) error { return parserErr }
+
+	eventHandler := func(*Event) error { return parserErr }
 	errorHandler := func(err error) error {
 		receivedByHandler = err
+
 		return streamErr
 	}
 
@@ -289,10 +297,11 @@ func TestClientEventHandlerErrorPropagation(t *testing.T) {
 	// to the error handler and if error returned by error handler is passed
 	// back on stream end.
 	client := New(server.URL+"/single-event", "")
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
-	err := client.Start(ctx, eventHandler, errorHandler)
 
+	err := client.Start(ctx, eventHandler, errorHandler)
 	if !errors.Is(err, streamErr) {
 		t.Fatalf("stream client dropped error handler error")
 	}
@@ -305,6 +314,13 @@ func TestClientEventHandlerErrorPropagation(t *testing.T) {
 func TestClientStream(t *testing.T) {
 	t.Parallel()
 
+	expected := []StreamMessage{{
+		Event: &Event{
+			Event: "message",
+			Data:  []byte("singe event stream"),
+		},
+	}}
+
 	server := httptest.NewServer(sseHandler())
 	defer server.Close()
 
@@ -314,20 +330,13 @@ func TestClientStream(t *testing.T) {
 	ctx, stop := context.WithCancel(context.TODO())
 	defer stop()
 
-	var actual []StreamMessage
+	actual := make([]StreamMessage, 0, len(expected))
 
 	for msg := range client.Stream(ctx, 0) {
 		actual = append(actual, msg)
 
 		stop()
 	}
-
-	expected := []StreamMessage{{
-		Event: &Event{
-			Event: "message",
-			Data:  []byte("singe event stream"),
-		},
-	}}
 
 	if !reflect.DeepEqual(expected, actual) {
 		t.Errorf("expected %v, got %v", expected, actual)
@@ -336,6 +345,10 @@ func TestClientStream(t *testing.T) {
 
 func TestClientStreamError(t *testing.T) {
 	t.Parallel()
+
+	expected := []StreamMessage{{
+		Err: errors.New("bad response status code 409"),
+	}}
 
 	server := httptest.NewServer(sseHandler())
 	defer server.Close()
@@ -346,17 +359,13 @@ func TestClientStreamError(t *testing.T) {
 	ctx, stop := context.WithCancel(context.TODO())
 	defer stop()
 
-	var actual []StreamMessage
+	actual := make([]StreamMessage, 0, len(expected))
 
 	for msg := range client.Stream(ctx, 0) {
 		actual = append(actual, msg)
 
 		stop()
 	}
-
-	expected := []StreamMessage{{
-		Err: errors.New("bad response status code 409"),
-	}}
 
 	if !reflect.DeepEqual(expected, actual) {
 		t.Errorf("expected %v, got %v", expected, actual)
@@ -365,38 +374,6 @@ func TestClientStreamError(t *testing.T) {
 
 func TestReconnectAfterPartialEvent(t *testing.T) {
 	t.Parallel()
-
-	ctx, stop := context.WithCancel(t.Context())
-	defer stop()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-
-		var response string
-		id := r.Header.Get("Last-Event-ID")
-		switch id {
-		case "0": // first request
-			response = "id: 1\ndata: message1\n\nid: 2\ndata: partial second message"
-		case "1": // second request
-			response = "id: 2\ndata: message2\n\n"
-		case "2": // third request
-			response = "id: 3\ndata: message3\n\n"
-		default:
-			stop()
-		}
-
-		_, _ = fmt.Fprint(w, response)
-	}))
-	defer server.Close()
-
-	client := New(server.URL, "0")
-	client.Retry = 0
-
-	var actual []StreamMessage
-	for msg := range client.Stream(ctx, 0) {
-		actual = append(actual, msg)
-	}
 
 	expected := []StreamMessage{
 		{
@@ -423,6 +400,39 @@ func TestReconnectAfterPartialEvent(t *testing.T) {
 				Data:  []byte("message3"),
 			},
 		},
+	}
+
+	ctx, stop := context.WithCancel(t.Context())
+	defer stop()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+
+		var response string
+
+		id := r.Header.Get("Last-Event-ID")
+		switch id {
+		case "0": // first request
+			response = "id: 1\ndata: message1\n\nid: 2\ndata: partial second message"
+		case "1": // second request
+			response = "id: 2\ndata: message2\n\n"
+		case "2": // third request
+			response = "id: 3\ndata: message3\n\n"
+		default:
+			stop()
+		}
+
+		_, _ = fmt.Fprint(w, response)
+	}))
+	defer server.Close()
+
+	client := New(server.URL, "0")
+	client.Retry = 0
+
+	actual := make([]StreamMessage, 0, len(expected))
+	for msg := range client.Stream(ctx, 0) {
+		actual = append(actual, msg)
 	}
 
 	if !reflect.DeepEqual(expected, actual) {
