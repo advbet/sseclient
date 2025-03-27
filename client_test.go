@@ -182,7 +182,7 @@ data: multiline data
 		client := &Client{}
 
 		event, err := client.parseEvent(r)
-		if event != test.event {
+		if !reflect.DeepEqual(event, test.event) {
 			t.Fatalf("expected event %v, got %v", test.event, event)
 		}
 
