@@ -129,6 +129,7 @@ func (c *Client) Stream(ctx context.Context, buf int) <-chan StreamMessage {
 		}
 	}
 
+	//nolint:unparam
 	eventFn := func(e *Event) error {
 		select {
 		case ch <- StreamMessage{Event: e}:
@@ -140,7 +141,8 @@ func (c *Client) Stream(ctx context.Context, buf int) <-chan StreamMessage {
 
 	go func() {
 		defer close(ch)
-		c.Start(ctx, eventFn, errorFn)
+
+		_ = c.Start(ctx, eventFn, errorFn)
 	}()
 
 	return ch
@@ -166,8 +168,9 @@ func (c *Client) Start(ctx context.Context, eventFn EventHandler, errorFn ErrorH
 
 	for {
 		err := c.connect(ctx, eventFn)
+
 		switch {
-		case err == nil, err == io.EOF:
+		case err == nil, errors.Is(err, io.EOF):
 			// ok, we can reconnect right away
 			lastTimeout = c.Retry / 32
 		case errors.Is(err, ctx.Err()):
@@ -193,7 +196,7 @@ func (c *Client) Start(ctx context.Context, eventFn EventHandler, errorFn ErrorH
 			}
 
 			if lastTimeout < c.Retry {
-				lastTimeout = lastTimeout * 2
+				lastTimeout *= 2
 			}
 		}
 	}
@@ -208,6 +211,7 @@ func (c *Client) connect(ctx context.Context, eventFn EventHandler) error {
 
 	req.Header.Set("Cache-Control", "no-cache")
 	req.Header.Set("Accept", "text/event-stream")
+
 	if c.LastEventID != "" {
 		req.Header.Set("Last-Event-ID", c.LastEventID)
 	}
@@ -223,12 +227,16 @@ func (c *Client) connect(ctx context.Context, eventFn EventHandler) error {
 		// silently ignore connection errors and reconnect.
 		return errStreamConn
 	}
-	defer resp.Body.Close()
+
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	switch resp.StatusCode {
 	case http.StatusOK:
 		// we do not support BOM in sse streams, or \r line separators.
 		r := bufio.NewReader(resp.Body)
+
 		for {
 			event, err := c.parseEvent(r)
 			if err != nil {
@@ -262,9 +270,11 @@ func chomp(b []byte) []byte {
 	if len(b) > 0 && b[len(b)-1] == '\n' {
 		b = b[:len(b)-1]
 	}
+
 	if len(b) > 0 && b[len(b)-1] == '\r' {
 		b = b[:len(b)-1]
 	}
+
 	return b
 }
 
@@ -277,20 +287,24 @@ func (c *Client) parseEvent(r *bufio.Reader) (*Event, error) {
 
 	for {
 		line, err := r.ReadBytes('\n')
-		line = chomp(line) // its ok to chop nil slice
+		line = chomp(line) // it's ok to chop nil slice
+
 		if err != nil {
 			// EOF is treated as silent reconnect. If this is
 			// malformed event report an error.
 			if err == io.EOF && len(line) != 0 {
 				err = ErrMalformedEvent
 			}
+
 			return nil, err
 		}
 
 		if len(line) == 0 {
 			c.LastEventID = event.ID
+
 			return event, nil
 		}
+
 		parts := bytes.SplitN(line, []byte(":"), 2)
 
 		// Make sure parts[1] always exist
@@ -309,6 +323,7 @@ func (c *Client) parseEvent(r *bufio.Reader) (*Event, error) {
 			if err != nil {
 				continue
 			}
+
 			c.Retry = time.Duration(ms) * time.Millisecond
 		case "id":
 			event.ID = string(parts[1])
@@ -318,6 +333,7 @@ func (c *Client) parseEvent(r *bufio.Reader) (*Event, error) {
 			if event.Data != nil {
 				event.Data = append(event.Data, '\n')
 			}
+
 			event.Data = append(event.Data, parts[1]...)
 		default:
 			// Ignore unknown fields and comments
