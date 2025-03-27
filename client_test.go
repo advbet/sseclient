@@ -224,7 +224,7 @@ func TestClientReconnect(t *testing.T) {
 	client.Retry = 0
 
 	counter := 0
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
 	handler := func(*Event) error {
 		counter++
 		if counter == 5 {
@@ -262,7 +262,7 @@ func TestClientError409(t *testing.T) {
 	// successful and stop sse client
 	client := New(server.URL+"/409", "")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
 	defer cancel()
 
 	_ = client.Start(ctx, eventHandler, errorHandler)
@@ -298,7 +298,7 @@ func TestClientEventHandlerErrorPropagation(t *testing.T) {
 	// back on stream end.
 	client := New(server.URL+"/single-event", "")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
 	defer cancel()
 
 	err := client.Start(ctx, eventHandler, errorHandler)
@@ -327,7 +327,7 @@ func TestClientStream(t *testing.T) {
 	client := New(server.URL+"/single-event", "")
 	client.Retry = 0
 
-	ctx, stop := context.WithCancel(context.TODO())
+	ctx, stop := context.WithCancel(t.Context())
 	defer stop()
 
 	actual := make([]StreamMessage, 0, len(expected))
@@ -356,7 +356,7 @@ func TestClientStreamError(t *testing.T) {
 	client := New(server.URL+"/409", "")
 	client.Retry = 0
 
-	ctx, stop := context.WithCancel(context.TODO())
+	ctx, stop := context.WithCancel(t.Context())
 	defer stop()
 
 	actual := make([]StreamMessage, 0, len(expected))
