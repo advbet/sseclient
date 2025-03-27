@@ -1,5 +1,4 @@
-sseclient
-=========
+# sseclient
 
 [![GoDoc](https://godoc.org/bitbucket.org/advbet/sseclient?status.svg)](https://godoc.org/bitbucket.org/advbet/sseclient)
 
