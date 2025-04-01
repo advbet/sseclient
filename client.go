@@ -77,17 +77,17 @@ var (
 )
 
 var (
-	// MalformedEvent error is returned if stream ended with incomplete event.
-	MalformedEvent = errors.New("incomplete event at the end of the stream")
+	// ErrMalformedEvent error is returned if stream ended with incomplete event.
+	ErrMalformedEvent = errors.New("incomplete event at the end of the stream")
 
 	// errStreamConn error is returned when client is unable to
 	// connect to the stream. This error is only used to reconnect to
-	// the stream without outputing connection errors to the client.
+	// the stream without outputting connection errors to the client.
 	errStreamConn = errors.New("cannot connect to the stream")
 )
 
 // New creates SSE stream client object. It will use given url and
-// last event ID values and a 2 second retry timeout.
+// last event ID values and a 2-second retry timeout.
 // It will use custom http client that skips verification for tls process.
 // This method only creates Client struct and does not start connecting to the
 // SSE endpoint.
@@ -99,7 +99,7 @@ func New(url, lastEventID string) *Client {
 		HTTPClient: &http.Client{
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: true,
+					InsecureSkipVerify: true, //nolint:gosec
 				},
 			},
 		},
@@ -129,17 +129,20 @@ func (c *Client) Stream(ctx context.Context, buf int) <-chan StreamMessage {
 		}
 	}
 
+	//nolint:unparam
 	eventFn := func(e *Event) error {
 		select {
 		case ch <- StreamMessage{Event: e}:
 		case <-ctx.Done():
 		}
+
 		return nil
 	}
 
 	go func() {
 		defer close(ch)
-		c.Start(ctx, eventFn, errorFn)
+
+		_ = c.Start(ctx, eventFn, errorFn)
 	}()
 
 	return ch
@@ -151,8 +154,8 @@ func (c *Client) Stream(ctx context.Context, buf int) <-chan StreamMessage {
 // returned by the error handler is passed back to the caller of this function.
 func (c *Client) Start(ctx context.Context, eventFn EventHandler, errorFn ErrorHandler) error {
 	lastTimeout := c.Retry / 32
-
 	tm := time.NewTimer(0)
+
 	stop := func() {
 		tm.Stop()
 
@@ -165,11 +168,12 @@ func (c *Client) Start(ctx context.Context, eventFn EventHandler, errorFn ErrorH
 
 	for {
 		err := c.connect(ctx, eventFn)
-		switch err {
-		case nil, io.EOF:
+
+		switch {
+		case err == nil, errors.Is(err, io.EOF):
 			// ok, we can reconnect right away
 			lastTimeout = c.Retry / 32
-		case ctx.Err():
+		case errors.Is(err, ctx.Err()):
 			// context cancellation exits silently
 			return nil
 		default:
@@ -192,7 +196,7 @@ func (c *Client) Start(ctx context.Context, eventFn EventHandler, errorFn ErrorH
 			}
 
 			if lastTimeout < c.Retry {
-				lastTimeout = lastTimeout * 2
+				lastTimeout *= 2
 			}
 		}
 	}
@@ -207,6 +211,7 @@ func (c *Client) connect(ctx context.Context, eventFn EventHandler) error {
 
 	req.Header.Set("Cache-Control", "no-cache")
 	req.Header.Set("Accept", "text/event-stream")
+
 	if c.LastEventID != "" {
 		req.Header.Set("Last-Event-ID", c.LastEventID)
 	}
@@ -222,12 +227,16 @@ func (c *Client) connect(ctx context.Context, eventFn EventHandler) error {
 		// silently ignore connection errors and reconnect.
 		return errStreamConn
 	}
-	defer resp.Body.Close()
+
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	switch resp.StatusCode {
 	case http.StatusOK:
 		// we do not support BOM in sse streams, or \r line separators.
 		r := bufio.NewReader(resp.Body)
+
 		for {
 			event, err := c.parseEvent(r)
 			if err != nil {
@@ -261,9 +270,11 @@ func chomp(b []byte) []byte {
 	if len(b) > 0 && b[len(b)-1] == '\n' {
 		b = b[:len(b)-1]
 	}
+
 	if len(b) > 0 && b[len(b)-1] == '\r' {
 		b = b[:len(b)-1]
 	}
+
 	return b
 }
 
@@ -273,22 +284,27 @@ func (c *Client) parseEvent(r *bufio.Reader) (*Event, error) {
 		ID:    c.LastEventID,
 		Event: "message",
 	}
+
 	for {
 		line, err := r.ReadBytes('\n')
-		line = chomp(line) // its ok to chop nil slice
+		line = chomp(line) // it's ok to chop nil slice
+
 		if err != nil {
 			// EOF is treated as silent reconnect. If this is
 			// malformed event report an error.
 			if err == io.EOF && len(line) != 0 {
-				err = MalformedEvent
+				err = ErrMalformedEvent
 			}
+
 			return nil, err
 		}
 
 		if len(line) == 0 {
 			c.LastEventID = event.ID
+
 			return event, nil
 		}
+
 		parts := bytes.SplitN(line, []byte(":"), 2)
 
 		// Make sure parts[1] always exist
@@ -300,12 +316,14 @@ func (c *Client) parseEvent(r *bufio.Reader) (*Event, error) {
 		if len(parts[1]) > 0 && parts[1][0] == ' ' {
 			parts[1] = parts[1][1:]
 		}
+
 		switch string(parts[0]) {
 		case "retry":
 			ms, err := strconv.Atoi(string(parts[1]))
 			if err != nil {
 				continue
 			}
+
 			c.Retry = time.Duration(ms) * time.Millisecond
 		case "id":
 			event.ID = string(parts[1])
@@ -315,6 +333,7 @@ func (c *Client) parseEvent(r *bufio.Reader) (*Event, error) {
 			if event.Data != nil {
 				event.Data = append(event.Data, '\n')
 			}
+
 			event.Data = append(event.Data, parts[1]...)
 		default:
 			// Ignore unknown fields and comments

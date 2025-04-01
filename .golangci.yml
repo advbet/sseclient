@@ -1,0 +1,82 @@
+# This is base linter configuration file. Feel free to modify it per project, based on your needs.
+# If you think that something should be included or removed from this file, please open a PR for discussion.
+
+
+version: "2"
+
+linters:
+  default: all
+
+  disable:
+    # Checks function and package cyclomatic complexity.
+    - cyclop
+    # Go linter that checks if package imports are in a list of acceptable packages.
+    - depguard
+    # Go linter to check the errors handling expressions.
+    - err113
+    # Checks types passed to the json encoding functions. Reports unsupported types and reports occurrences where
+    # the check for the returned error can be omitted.
+    - errchkjson
+    # Checks if all structure fields are initialized.
+    - exhaustruct
+    # Checks for long functions.
+    - funlen
+    # Check that no global variables exist.
+    - gochecknoglobals
+    # Checks that no init functions are present in Go code.
+    - gochecknoinits
+    # Detects usage of FIXME, TODO and other keywords inside comments.
+    - godox
+    # A linter that checks the number of methods inside an interface.
+    - interfacebloat
+    # Accept Interfaces, Return Concrete Types.
+    - ireturn
+    # Reports long lines
+    - lll
+    # An analyzer to detect magic numbers.
+    - mnd
+    # Reports all named returns.
+    - nonamedreturns
+    # Check that struct tags are well aligned.
+    - tagalign
+    # Checks the struct tags.
+    # We do not want to enforce "cases".
+    - tagliatelle
+    # Linter that makes you use a separate _test package.
+    - testpackage
+    # Checks that the length of a variable's name matches its scope.
+    - varnamelen
+    # Checks that errors returned from external packages are wrapped.
+    - wrapcheck
+    # Detects the wrong usage of zerolog that a user forgets to dispatch with Send or Msg.
+    - zerologlint
+
+  settings:
+    gosec:
+      excludes:
+        # G104: Audit errors not checked.
+        # This already checked by errcheck.
+        - G104
+    # by default all testifylint rules are disabled
+    testifylint:
+      enable-all: true
+
+  exclusions:
+    rules:
+      - linters:
+          # Tool for code clone detection.
+          - dupl
+          # Maintidx measures the maintainability index of each function.
+          - maintidx
+        path: (.+)_test.go
+
+formatters:
+  enable:
+    - gci
+    - gofmt
+    - gofumpt
+    - goimports
+
+output:
+  sort-order:
+    - file

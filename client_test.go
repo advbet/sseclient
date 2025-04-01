@@ -9,31 +9,46 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
-
-	"github.com/stretchr/testify/assert"
 )
 
 func TestParseEventRetry(t *testing.T) {
+	t.Parallel()
+
 	r := bufio.NewReader(bytes.NewBufferString("retry: 100\n\n"))
 	client := &Client{}
 
 	_, err := client.parseEvent(r)
-	assert.NoError(t, err)
-	assert.Equal(t, 100*time.Millisecond, client.Retry)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if client.Retry != 100*time.Millisecond {
+		t.Fatalf("expected retry to be 100ms, got %v", client.Retry)
+	}
 }
 
 func TestParseEventInvalidRetry(t *testing.T) {
+	t.Parallel()
+
 	r := bufio.NewReader(bytes.NewBufferString("retry: ???\n\n"))
 	client := &Client{}
 
 	_, err := client.parseEvent(r)
-	assert.NoError(t, err)
-	assert.Equal(t, time.Duration(0), client.Retry)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if client.Retry != 0 {
+		t.Fatalf("expected retry to be 0, got %v", client.Retry)
+	}
 }
 
 func TestParseEvent(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		data  string
 		event *Event
@@ -148,7 +163,7 @@ data: multiline data
 		{
 			data:  "data: test", // missing \n to be complete event
 			event: nil,
-			err:   MalformedEvent,
+			err:   ErrMalformedEvent,
 		},
 		{
 			data:  "",
@@ -165,24 +180,32 @@ data: multiline data
 	for _, test := range tests {
 		r := bufio.NewReader(bytes.NewBufferString(test.data))
 		client := &Client{}
+
 		event, err := client.parseEvent(r)
-		assert.Equal(t, test.event, event)
-		assert.Equal(t, test.err, err)
+		if !reflect.DeepEqual(event, test.event) {
+			t.Fatalf("expected event %v, got %v", test.event, event)
+		}
+
+		if !errors.Is(err, test.err) {
+			t.Fatalf("expected error %v, got %v", test.err, err)
+		}
 	}
 }
 
 func sseHandler() http.Handler {
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/single-event", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/single-event", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
-		fmt.Fprint(w, "data: singe event stream\n\n")
+		_, _ = fmt.Fprint(w, "data: singe event stream\n\n")
 	})
-	mux.HandleFunc("/500", func(w http.ResponseWriter, r *http.Request) {
+
+	mux.HandleFunc("/500", func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "oops 500", http.StatusInternalServerError)
 	})
-	mux.HandleFunc("/409", func(w http.ResponseWriter, r *http.Request) {
+
+	mux.HandleFunc("/409", func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "oops 409", http.StatusConflict)
 	})
 
@@ -190,6 +213,8 @@ func sseHandler() http.Handler {
 }
 
 func TestClientReconnect(t *testing.T) {
+	t.Parallel()
+
 	server := httptest.NewServer(sseHandler())
 	defer server.Close()
 
@@ -199,51 +224,59 @@ func TestClientReconnect(t *testing.T) {
 	client.Retry = 0
 
 	counter := 0
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
-	handler := func(e *Event) error {
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
+	handler := func(*Event) error {
 		counter++
 		if counter == 5 {
 			cancel()
 		}
+
 		return nil
 	}
 
-	client.Start(ctx, handler, ReconnectOnError)
+	_ = client.Start(ctx, handler, ReconnectOnError)
 
 	// We must have at least 2 reconnect attempts to confirm that client
 	// reconnected automatically
 	if counter != 5 {
-		t.Fatalf("expected at to receive 5 events, received %d", counter)
+		t.Fatalf("expected to receive 5 events, received %d", counter)
 	}
 }
 
 func TestClientError409(t *testing.T) {
+	t.Parallel()
+
 	server := httptest.NewServer(sseHandler())
 	defer server.Close()
 
 	ok := false
-	eventHandler := func(e *Event) error { return nil }
-	errorHandler := func(err error) error {
+	eventHandler := func(*Event) error { return nil }
+	errorHandler := func(error) error {
 		ok = true
+
 		return errors.New("stop")
 	}
 
 	// /409 endpoint will return 409 status code which should trigger an
 	// error. If out error handler catches the error it will mark test as
-	// successfull and stop sse client
+	// successful and stop sse client
 	client := New(server.URL+"/409", "")
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
 	defer cancel()
-	client.Start(ctx, eventHandler, errorHandler)
+
+	_ = client.Start(ctx, eventHandler, errorHandler)
 
 	// We must have at least 2 reconnect attempts to confirm that client
 	// reconnected automatically
 	if !ok {
-		t.Fatalf("reponse code 409 should trigger a call to error handler")
+		t.Fatalf("response code 409 should trigger a call to error handler")
 	}
 }
 
 func TestClientEventHandlerErrorPropagation(t *testing.T) {
+	t.Parallel()
+
 	server := httptest.NewServer(sseHandler())
 	defer server.Close()
 
@@ -251,9 +284,11 @@ func TestClientEventHandlerErrorPropagation(t *testing.T) {
 	streamErr := errors.New("stop the stream")
 
 	var receivedByHandler error
-	eventHandler := func(e *Event) error { return parserErr }
+
+	eventHandler := func(*Event) error { return parserErr }
 	errorHandler := func(err error) error {
 		receivedByHandler = err
+
 		return streamErr
 	}
 
@@ -262,32 +297,22 @@ func TestClientEventHandlerErrorPropagation(t *testing.T) {
 	// to the error handler and if error returned by error handler is passed
 	// back on stream end.
 	client := New(server.URL+"/single-event", "")
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
-	defer cancel()
-	err := client.Start(ctx, eventHandler, errorHandler)
 
-	if err != streamErr {
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
+	defer cancel()
+
+	err := client.Start(ctx, eventHandler, errorHandler)
+	if !errors.Is(err, streamErr) {
 		t.Fatalf("stream client dropped error handler error")
 	}
-	if receivedByHandler != parserErr {
+
+	if !errors.Is(receivedByHandler, parserErr) {
 		t.Fatalf("stream client did not pass parser error to error handler")
 	}
 }
 
 func TestClientStream(t *testing.T) {
-	server := httptest.NewServer(sseHandler())
-	defer server.Close()
-
-	client := New(server.URL+"/single-event", "")
-	client.Retry = 0
-
-	ctx, stop := context.WithCancel(context.TODO())
-	defer stop()
-	var actual []StreamMessage
-	for msg := range client.Stream(ctx, 0) {
-		actual = append(actual, msg)
-		stop()
-	}
+	t.Parallel()
 
 	expected := []StreamMessage{{
 		Event: &Event{
@@ -295,60 +320,60 @@ func TestClientStream(t *testing.T) {
 			Data:  []byte("singe event stream"),
 		},
 	}}
-	assert.Equal(t, expected, actual)
+
+	server := httptest.NewServer(sseHandler())
+	defer server.Close()
+
+	client := New(server.URL+"/single-event", "")
+	client.Retry = 0
+
+	ctx, stop := context.WithCancel(t.Context())
+	defer stop()
+
+	actual := make([]StreamMessage, 0, len(expected))
+
+	for msg := range client.Stream(ctx, 0) {
+		actual = append(actual, msg)
+
+		stop()
+	}
+
+	if !reflect.DeepEqual(expected, actual) {
+		t.Errorf("expected %v, got %v", expected, actual)
+	}
 }
 
 func TestClientStreamError(t *testing.T) {
+	t.Parallel()
+
+	expected := []StreamMessage{{
+		Err: errors.New("bad response status code 409"),
+	}}
+
 	server := httptest.NewServer(sseHandler())
 	defer server.Close()
 
 	client := New(server.URL+"/409", "")
 	client.Retry = 0
 
-	ctx, stop := context.WithCancel(context.TODO())
+	ctx, stop := context.WithCancel(t.Context())
 	defer stop()
-	var actual []StreamMessage
+
+	actual := make([]StreamMessage, 0, len(expected))
+
 	for msg := range client.Stream(ctx, 0) {
 		actual = append(actual, msg)
+
 		stop()
 	}
 
-	expected := []StreamMessage{{
-		Err: errors.New("bad response status code 409"),
-	}}
-	assert.Equal(t, expected, actual)
+	if !reflect.DeepEqual(expected, actual) {
+		t.Errorf("expected %v, got %v", expected, actual)
+	}
 }
 
 func TestReconnectAfterPartialEvent(t *testing.T) {
-	ctx, stop := context.WithCancel(context.TODO())
-	defer stop()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-
-		var response string
-		id := r.Header.Get("Last-Event-ID")
-		switch id {
-		case "0": // first request
-			response = "id: 1\ndata: message1\n\nid: 2\ndata: partial second message"
-		case "1": // second request
-			response = "id: 2\ndata: message2\n\n"
-		case "2": // third request
-			response = "id: 3\ndata: message3\n\n"
-		default:
-			stop()
-		}
-		fmt.Fprint(w, response)
-	}))
-	defer server.Close()
-
-	client := New(server.URL, "0")
-	client.Retry = 0
-
-	var actual []StreamMessage
-	for msg := range client.Stream(ctx, 0) {
-		actual = append(actual, msg)
-	}
+	t.Parallel()
 
 	expected := []StreamMessage{
 		{
@@ -359,7 +384,7 @@ func TestReconnectAfterPartialEvent(t *testing.T) {
 			},
 		},
 		{
-			Err: MalformedEvent,
+			Err: ErrMalformedEvent,
 		},
 		{
 			Event: &Event{
@@ -376,5 +401,41 @@ func TestReconnectAfterPartialEvent(t *testing.T) {
 			},
 		},
 	}
-	assert.Equal(t, expected, actual)
+
+	ctx, stop := context.WithCancel(t.Context())
+	defer stop()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+
+		var response string
+
+		id := r.Header.Get("Last-Event-ID")
+		switch id {
+		case "0": // first request
+			response = "id: 1\ndata: message1\n\nid: 2\ndata: partial second message"
+		case "1": // second request
+			response = "id: 2\ndata: message2\n\n"
+		case "2": // third request
+			response = "id: 3\ndata: message3\n\n"
+		default:
+			stop()
+		}
+
+		_, _ = fmt.Fprint(w, response)
+	}))
+	defer server.Close()
+
+	client := New(server.URL, "0")
+	client.Retry = 0
+
+	actual := make([]StreamMessage, 0, len(expected))
+	for msg := range client.Stream(ctx, 0) {
+		actual = append(actual, msg)
+	}
+
+	if !reflect.DeepEqual(expected, actual) {
+		t.Errorf("expected %v, got %v", expected, actual)
+	}
 }
