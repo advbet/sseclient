@@ -347,7 +347,7 @@ func TestClientStreamError(t *testing.T) {
 	t.Parallel()
 
 	expected := []StreamMessage{{
-		Err: errors.New("bad response status code 409"),
+		Err: errors.New("bad response status code: 409"),
 	}}
 
 	server := httptest.NewServer(sseHandler())
