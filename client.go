@@ -21,6 +21,8 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/sirupsen/logrus"
 )
 
 // Event object is a representation of single chunk of data in event stream.
@@ -65,9 +67,8 @@ type Client struct {
 	HTTPClient  *http.Client
 	Headers     http.Header
 
-	// VerboseStatusCodes specifies whether connect should return all
-	// status codes as errors if they're not StatusOK (200).
-	VerboseStatusCodes bool
+	// DebugLogger is a logger used to log debug messages.
+	DebugLogger logrus.FieldLogger
 }
 
 // List of commonly used error handler function implementations.
@@ -76,15 +77,8 @@ var (
 	StopOnError      ErrorHandler = func(err error) error { return err }
 )
 
-var (
-	// ErrMalformedEvent error is returned if stream ended with incomplete event.
-	ErrMalformedEvent = errors.New("incomplete event at the end of the stream")
-
-	// errStreamConn error is returned when client is unable to
-	// connect to the stream. This error is only used to reconnect to
-	// the stream without outputting connection errors to the client.
-	errStreamConn = errors.New("cannot connect to the stream")
-)
+// ErrMalformedEvent error is returned if stream ended with incomplete event.
+var ErrMalformedEvent = errors.New("incomplete event at the end of the stream")
 
 // New creates SSE stream client object. It will use given url and
 // last event ID values and a 2-second retry timeout.
@@ -142,7 +136,7 @@ func (c *Client) Stream(ctx context.Context, buf int) <-chan StreamMessage {
 	go func() {
 		defer close(ch)
 
-		_ = c.Start(ctx, eventFn, errorFn)
+		c.Start(ctx, eventFn, errorFn) //nolint:errcheck // we don't care about error here
 	}()
 
 	return ch
@@ -167,7 +161,19 @@ func (c *Client) Start(ctx context.Context, eventFn EventHandler, errorFn ErrorH
 	defer stop()
 
 	for {
+		if c.DebugLogger != nil {
+			c.DebugLogger.WithFields(logrus.Fields{
+				"last_event_id": c.LastEventID,
+				"url":           c.URL,
+			}).Debug("connecting to the SSE stream")
+		}
+
 		err := c.connect(ctx, eventFn)
+
+		if c.DebugLogger != nil {
+			c.DebugLogger.WithField("url", c.URL).
+				Debug("disconnected from the SSE stream")
+		}
 
 		switch {
 		case err == nil, errors.Is(err, io.EOF):
@@ -177,12 +183,10 @@ func (c *Client) Start(ctx context.Context, eventFn EventHandler, errorFn ErrorH
 			// context cancellation exits silently
 			return nil
 		default:
-			if !errors.Is(err, errStreamConn) {
-				if cerr := errorFn(err); cerr != nil {
-					// error handler instructs to stop
-					// the sse stream
-					return cerr
-				}
+			if cerr := errorFn(err); cerr != nil {
+				// error handler instructs to stop
+				// the sse stream
+				return cerr
 			}
 
 			stop()
@@ -204,7 +208,7 @@ func (c *Client) Start(ctx context.Context, eventFn EventHandler, errorFn ErrorH
 
 // connect performs single connection to SSE endpoint.
 func (c *Client) connect(ctx context.Context, eventFn EventHandler) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.URL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.URL, http.NoBody)
 	if err != nil {
 		return err
 	}
@@ -224,44 +228,32 @@ func (c *Client) connect(ctx context.Context, eventFn EventHandler) error {
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		// silently ignore connection errors and reconnect.
-		return errStreamConn
+		return err
 	}
 
-	defer func() {
-		_ = resp.Body.Close()
-	}()
+	defer resp.Body.Close() //nolint:errcheck // we don't care about body close errors.
 
-	switch resp.StatusCode {
-	case http.StatusOK:
-		// we do not support BOM in sse streams, or \r line separators.
-		r := bufio.NewReader(resp.Body)
-
-		for {
-			event, err := c.parseEvent(r)
-			if err != nil {
-				return err
-			}
-
-			// ignore empty events
-			if len(event.Data) == 0 {
-				continue
-			}
-
-			if err := eventFn(event); err != nil {
-				return err
-			}
-		}
-	case http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
-		if c.VerboseStatusCodes {
-			return fmt.Errorf("bad response status code %d", resp.StatusCode)
-		}
-
-		// reconnect without logging an error.
-		return errStreamConn
-	default:
+	if resp.StatusCode != http.StatusOK {
 		// trigger a reconnect and output an error.
-		return fmt.Errorf("bad response status code %d", resp.StatusCode)
+		return fmt.Errorf("bad response status code: %d", resp.StatusCode)
+	}
+
+	r := bufio.NewReader(resp.Body)
+
+	for {
+		event, err := c.parseEvent(r)
+		if err != nil {
+			return err
+		}
+
+		// ignore empty events
+		if len(event.Data) == 0 {
+			continue
+		}
+
+		if err := eventFn(event); err != nil {
+			return err
+		}
 	}
 }
 
