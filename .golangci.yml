@@ -35,6 +35,8 @@ linters:
     - lll
     # An analyzer to detect magic numbers.
     - mnd
+    # Disallows inline error handling (if err := ...; err != nil {).
+    - noinlineerr
     # Reports all named returns.
     - nonamedreturns
     # Check that struct tags are well aligned.
@@ -48,15 +50,85 @@ linters:
     - varnamelen
     # Checks that errors returned from external packages are wrapped.
     - wrapcheck
+    # The linter 'wsl' is deprecated (since v2.2.0) due to: new major version. Replaced by wsl_v5.
+    - wsl
     # Detects the wrong usage of zerolog that a user forgets to dispatch with Send or Msg.
     - zerologlint
 
   settings:
+    wsl_v5:
+      # Allow cuddling a variable if it's used first in the immediate following block,
+      # even if the statement with the block doesn't use the variable.
+      # https://github.com/bombsimon/wsl/tree/main?tab=readme-ov-file#configuration
+      # Default: true
+      allow-first-in-block: true
+      # Same as above,
+      # but allows cuddling if the variable is used anywhere in the following (or nested) block.
+      # https://github.com/bombsimon/wsl/tree/main?tab=readme-ov-file#configuration
+      # Default: false
+      allow-whole-block: false
+      # If a block contains more than this number of lines,
+      # the branch statement needs to be separated by whitespace.
+      # https://github.com/bombsimon/wsl/tree/main?tab=readme-ov-file#configuration
+      # Default: 2
+      branch-max-lines: 4
+      # If set to a non-negative number,
+      # case blocks need to end with whitespace if exceeding this number
+      # https://github.com/bombsimon/wsl/tree/main?tab=readme-ov-file#configuration
+      # Default: 0
+      case-max-lines: 0
+      # Default checks to use.
+      # Can be `all`, `none`, `default` or empty.
+      # https://github.com/bombsimon/wsl/tree/main?tab=readme-ov-file#checks-and-configuration
+      # Default: ""
+      default: none
+      # Enabled checks.
+      # Will be additive to any presets.
+      # https://github.com/bombsimon/wsl/tree/main?tab=readme-ov-file#checks-and-configuration
+      # Default: []
+      enable:
+        - assign
+        - branch
+        - expr
+        - for
+        - if
+        - inc-dec
+        - label
+        - range
+        - return
+        - select
+        - send
+        - switch
+        - type-switch
+        - append
+        - assign-expr
+        - err
+        - leading-whitespace
+        - trailing-whitespace
+        # these are disabled
+        # - decl
+        # - defer
+        # - go
+        # - assign-exclusive
+
+    # this rule should be enabled in packages!
+    revive:
+      rules:
+        - name: package-comments
+          disabled: true
     gosec:
       excludes:
         # G104: Audit errors not checked.
         # This already checked by errcheck.
         - G104
+    nlreturn:
+      block-size: 2
+    errcheck:
+      exclude-functions:
+        - github.com/coreos/go-systemd/v22/daemon.SdNotify
+        - (*github.com/ory/dockertest/v3.Pool).Purge
+        - (*github.com/ory/dockertest/v3.Resource).Expire
+        - (net/http.ResponseWriter).Write
     # by default all testifylint rules are disabled
     testifylint:
       enable-all: true
@@ -68,7 +140,14 @@ linters:
           - dupl
           # Maintidx measures the maintainability index of each function.
           - maintidx
+          # Finds repeated strings that could be replaced by a constant.
+          - goconst
+          # Checks that fmt.Sprintf can be replaced with a faster alternative.
+          - perfsprint
         path: (.+)_test.go
+    presets:
+      # disables required check for .((os\.)?std(out|err)\..*|.*Close|.*Flush|os\.Remove(All)?|.*print(f|ln)?|os\.(Un)?Setenv).
+      - std-error-handling
 
 formatters:
   enable:

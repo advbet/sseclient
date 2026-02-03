@@ -198,6 +198,7 @@ func sseHandler() http.Handler {
 	mux.HandleFunc("/single-event", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
+
 		_, _ = fmt.Fprint(w, "data: singe event stream\n\n")
 	})
 

@@ -231,7 +231,7 @@ func (c *Client) connect(ctx context.Context, eventFn EventHandler) error {
 		return err
 	}
 
-	defer resp.Body.Close() //nolint:errcheck // we don't care about body close errors.
+	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		// trigger a reconnect and output an error.
