@@ -18,11 +18,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
-
-	"github.com/sirupsen/logrus"
 )
 
 // Event object is a representation of single chunk of data in event stream.
@@ -68,7 +67,7 @@ type Client struct {
 	Headers     http.Header
 
 	// DebugLogger is a logger used to log debug messages.
-	DebugLogger logrus.FieldLogger
+	DebugLogger *slog.Logger
 }
 
 // List of commonly used error handler function implementations.
@@ -162,17 +161,13 @@ func (c *Client) Start(ctx context.Context, eventFn EventHandler, errorFn ErrorH
 
 	for {
 		if c.DebugLogger != nil {
-			c.DebugLogger.WithFields(logrus.Fields{
-				"last_event_id": c.LastEventID,
-				"url":           c.URL,
-			}).Debug("connecting to the SSE stream")
+			c.DebugLogger.Debug("connecting to the SSE stream", slog.String("last_event_id", c.LastEventID), slog.String("url", c.URL))
 		}
 
 		err := c.connect(ctx, eventFn)
 
 		if c.DebugLogger != nil {
-			c.DebugLogger.WithField("url", c.URL).
-				Debug("disconnected from the SSE stream")
+			c.DebugLogger.Debug("disconnected from the SSE stream", slog.String("url", c.URL))
 		}
 
 		switch {
